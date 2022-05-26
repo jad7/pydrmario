@@ -1,36 +1,28 @@
-# Import the pygame module
 import pygame
 from pygame import DOUBLEBUF, RESIZABLE, SCALED
-# Import pygame.locals for easier access to key coordinates
-# Updated to conform to flake8 and black standards
 from pygame.locals import (
     KEYDOWN,
     QUIT,
 )
 
-from brick import Bottle, Pillow, init as viruses_init
+from bottle import Bottle
+from brick import init as viruses_init
+from constants import BLACK
+from pillow import Pillow
 
-X = 6
-Y = 20
+X = 8
+Y = 17
 
 pygame.font.init()
-BLACK = (0, 0, 0)
 
-bottle_offset = (20, 20)
+bottle_offset = (200, 100)
 brick_size = 40
-virus_offset = 10
-VIRUSES_COUNT = 10
+virus_offset = 5
+VIRUSES_COUNT = 84
 bottle: Bottle = None
-# next_pillow_offset = None
-# bottle = Bottle(X, Y, brick_size, offset=bottle_offset)
 next_pillow_offset = (bottle_offset[0] + X * brick_size + 20, 10)
 
-# all_sprites_list = pygame.sprite.Group()
-# all_viruses = pygame.sprite.Group()
-# all_tablets = pygame.sprite.Group()
-
-
-SCREEN_WIDTH = 400
+SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 1000
 
 # Create the screen object
@@ -41,11 +33,9 @@ screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), SCALED | RESIZAB
 # fake_screen = screen.copy()
 viruses_init()
 
-# Instantiate player. Right now, this is just a rectangle.
 tick = 2 * 3
 mult = 1
 
-# Variable to keep the main loop running
 running = True
 
 pause_state = None
@@ -59,8 +49,6 @@ num = 0
 # pygame.key.set_repeat(200, 200)
 while running:
     mult = 1
-    # Look at every event in the queue
-
     # resize_events = pygame.event.get(eventtype=VIDEORESIZE)
     # if resize_events:
     #    screen = pygame.display.set_mode(resize_events[0].size, HWSURFACE | DOUBLEBUF | RESIZABLE)
@@ -71,15 +59,7 @@ while running:
 
     events_raw = pygame.event.get(eventtype=KEYDOWN)
     keys = {event.key: event for event in events_raw}
-    # for event in :
-    #    # Did the user hit a key?
-    #    if event.type == KEYDOWN:
-    #        # Was it the Escape key? If so, stop the loop.
-    #        if event.key == K_ESCAPE:
-    #            running = False
-    # Did the user click the window close button? If so, stop the loop.
-    #    elif event.type == QUIT:
-    #        running = False
+
     if state == -1:
         if bottle:
             bottle.empty()
@@ -110,27 +90,18 @@ while running:
             tick = tick - 1
         if pygame.K_LEFT in keys:
             pillow.move_left()
-            pass
-            # paddle.moveLeft(5)
         if pygame.K_RIGHT in keys:
             pillow.move_right()
-            pass
-            # paddle.moveRight(5)
         if downkeys[pygame.K_DOWN]:
             mult = 4
-            pass
-            # paddle.moveRight(5)
         if pygame.K_z in keys:
             pillow.turn_uclw()
-            pass
         if pygame.K_x in keys:
             pillow.turn_clw()
-            pass
         if pygame.K_RETURN in keys:
             bottle.pause()
             pause_state = state
             state = 6
-            # paddle.moveRight(5)
 
         num = (num + 1) % 3
         if num == 0:
@@ -159,13 +130,10 @@ while running:
 
     elif state == 5:
         bottle.end()
-        # keys = pygame.key.get_pressed()
-        # keys = pygame.event.get(eventtype=KEYDOWN)
         if keys:
             if pygame.K_RETURN in keys:
                 state = -1
     elif state == 6:
-        # keys = pygame.key.get_pressed()
         if pygame.K_RETURN in keys:
             state = pause_state
             bottle.unpause()
@@ -182,6 +150,4 @@ while running:
     # --- Limit to 60 frames per second
     clock.tick(tick * mult)
 
-    # Draw the player on the screen
-    # screen.blit(player.surf, player.rect)
 pygame.quit()
