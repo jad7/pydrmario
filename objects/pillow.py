@@ -1,7 +1,9 @@
 import random
 
-from brick import Brick
+from pygame import Surface
+
 from constants import *
+from .brick import Brick
 
 
 class Pillow:
@@ -227,3 +229,12 @@ class Pillow:
             Brick(COLORS[int(random.random() * len(COLORS))], brick_size, brick_size, offset, position=(0, 0)),
             Brick(COLORS[int(random.random() * len(COLORS))], brick_size, brick_size, offset, position=(1, 0))
         )
+
+    def draw(self, surf: Surface):
+        surf.fill(BLACK)
+        if self.brick1:
+            self.brick1.update()
+            surf.blit(self.brick1.image, self.brick1.rect)
+        if self.brick2:
+            self.brick2.update()
+            surf.blit(self.brick2.image, self.brick2.rect)

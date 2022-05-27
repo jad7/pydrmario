@@ -6,7 +6,8 @@ BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
 BLUE = (0, 176, 240)
 RED = (255, 0, 0)
-YELLOW = (255, 255, 0)
+YELLOW = (247, 224, 12)
+GREEN = (32, 138, 18)
 
 COLOR_NAMES = {
     BLUE: "B",

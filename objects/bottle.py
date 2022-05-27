@@ -1,25 +1,31 @@
 import itertools
 import random
 from builtins import set
-from typing import Tuple, List, Set
+from typing import Tuple, List, Set, Any
 
 import pygame
 
-from brick import Brick
 from constants import *
+from .brick import Brick
 
 
 class Bottle(pygame.sprite.Group):
-    def __init__(self, X, Y, brick_size, offset, *sprites):
+    def __init__(self, X, Y, brick_size, bottle_surface, *sprites):
         super().__init__(*sprites)
-        self.offset = offset
+        self.offset = [0, -brick_size]
         self.X = X
         self.Y = Y
         self.brick_size = brick_size
         self.bottle = [[None for x in range(Y)] for y in range(X)]
         self.positions = dict()
         self.viruses = 0
+        self.surf = bottle_surface
         self.pause_text = Text("Pause!", 30, BLUE, int(self.X * self.brick_size / 2), int(self.Y * self.brick_size / 2))
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        super().update()
+        self.surf.fill(BLACK)
+        self.draw(self.surf)
 
     def populate_viruses(self, count, y_offset):
         free = [Point(x, y + y_offset) for x in range(self.X) for y in range(self.Y - y_offset)]
@@ -41,7 +47,8 @@ class Bottle(pygame.sprite.Group):
 
     def add_pillow(self, pillow: "Pillow"):
         pillow.update_offset(self.offset)
-        pillow.add_to_bottle(self, (2, 1))
+        pillow.add_to_bottle(self, (3, 1))
+        self.add(pillow.bricks())
         return pillow
 
     def __getitem__(self, item):
