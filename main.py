@@ -5,9 +5,10 @@ from pygame.locals import (
     QUIT,
 )
 
-from constants import BLACK, GREEN
+from constants import *
 from objects.bottle import Bottle
 from objects.brick import init as viruses_init
+from objects.draw import draw_bg
 from objects.pillow import Pillow
 
 X = 8
@@ -15,15 +16,21 @@ Y = 17
 between_bricks = 3
 pygame.font.init()
 
-bottle_offset = (50, 50)
+bottle_offset = (50, 100)
 brick_size = 20
 virus_offset = 5
 VIRUSES_COUNT = 84
 bottle: Bottle = None
+mute = True
 next_pillow_offset = (bottle_offset[0] + X * brick_size + 20, 10)
 
 SCREEN_WIDTH = 300
-SCREEN_HEIGHT = 450
+SCREEN_HEIGHT = 500
+pygame.mixer.init()
+try:
+    fever_music = pygame.mixer.music.load("music_mp3/3 - Fever.mp3")
+except:
+    print("ignore not found music")
 
 # Create the screen object
 # The size is determined by the constant SCREEN_WIDTH and SCREEN_HEIGHT
@@ -31,16 +38,12 @@ SCREEN_HEIGHT = 450
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), SCALED | RESIZABLE | DOUBLEBUF)
 # screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT),HWSURFACE|DOUBLEBUF|RESIZABLE)
 # fake_screen = screen.copy()
-bg_cube_size = 10
-for i in range(SCREEN_WIDTH // bg_cube_size - 1):
-    for j in range(SCREEN_HEIGHT // bg_cube_size - 1):
-        color = GREEN if (i + j) % 2 == 0 else BLACK
-        pygame.draw.rect(screen, color,
-                         [i * bg_cube_size, j * bg_cube_size, (i + 1) * bg_cube_size, (j + 1) * bg_cube_size])
+# screen.fill(BLACK)
+draw_bg(screen, SCREEN_WIDTH, SCREEN_HEIGHT, 10)
 
+bottle_size = (X * (brick_size + between_bricks) - between_bricks, (Y - 1) * (brick_size + between_bricks))
 # Y-1 because position 0 is reserved, by out-of-box
-bottle_surf = screen.subsurface([bottle_offset[0], bottle_offset[1], (X * (brick_size + between_bricks)),
-                                 ((Y - 1) * (brick_size + between_bricks))])
+bottle_surf = screen.subsurface([bottle_offset[0], bottle_offset[1], *bottle_size])
 bottle_surf.fill(BLACK)
 
 next_pillow_surf = screen.subsurface(
@@ -48,9 +51,13 @@ next_pillow_surf = screen.subsurface(
 pygame.draw.rect(screen, BLACK,
                  [bottle_offset[0] + X * brick_size + 20 - 10, 10 - 10, brick_size * 2 + between_bricks + 20,
                   brick_size + 20])
-# next_pillow_surf.fill(BLACK)
-# bottle_surf = screen.subsurface(0, 0, )
 
+# draw_bottle(screen, bottle_offset, bottle_size)
+# TODO move to bottle object
+bottle_image_raw = pygame.image.load("img/bottle.png").convert_alpha()
+bottle_image_scale = pygame.transform.scale(bottle_image_raw, (bottle_size[0] + 35, bottle_size[1] + 95))
+del bottle_image_raw
+screen.blit(bottle_image_scale, (bottle_offset[0] - 18, bottle_offset[1] - 81))
 
 viruses_init()
 
@@ -71,9 +78,6 @@ num = 0
 # pygame.key.set_repeat(200, 200)
 while running:
     mult = 1
-    # resize_events = pygame.event.get(eventtype=VIDEORESIZE)
-    # if resize_events:
-    #    screen = pygame.display.set_mode(resize_events[0].size, HWSURFACE | DOUBLEBUF | RESIZABLE)
 
     quit_events = pygame.event.get(eventtype=QUIT)
     if quit_events:
@@ -89,6 +93,8 @@ while running:
         pillow = None
         next_pillow = Pillow.create(brick_size, [0, 0])
         bottle.populate_viruses(VIRUSES_COUNT, virus_offset)
+        if not mute:
+            pygame.mixer.music.play(-1)
         state = -2
 
     if bottle.virus_count() == 0:

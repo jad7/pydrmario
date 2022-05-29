@@ -8,6 +8,7 @@ BLUE = (0, 176, 240)
 RED = (255, 0, 0)
 YELLOW = (247, 224, 12)
 GREEN = (32, 138, 18)
+BOT_BLUE = (52, 235, 216)
 
 COLOR_NAMES = {
     BLUE: "B",
