@@ -238,3 +238,10 @@ class Pillow:
         if self.brick2:
             self.brick2.update()
             surf.blit(self.brick2.image, self.brick2.rect)
+
+    @classmethod
+    def from_data(cls, tuple, brick_size, offset):
+        return Pillow(
+            Brick(COLOR_SHORTS[tuple[0]], brick_size, brick_size, offset, position=(0, 0)),
+            Brick(COLOR_SHORTS[tuple[1]], brick_size, brick_size, offset, position=(1, 0))
+        )

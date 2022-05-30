@@ -160,6 +160,23 @@ class Bottle(pygame.sprite.Group):
     def unpause(self):
         self.pause_text.kill()
 
+    def get_viruses(self):
+        res = []
+        for y in range(self.Y):
+            for x in range(self.X):
+                if self[x, y] and self[x, y].is_virus():
+                    res.append((x, y, COLOR_NAMES[self[x, y].color]))
+        return res
+
+    def set_viruses(self, viruses: List[Tuple[int, int, str]]):
+        for virus in viruses:
+            point = Point(virus[0], virus[1])
+            b = Brick(COLOR_SHORTS[virus[2]], self.brick_size, self.brick_size, self.offset,
+                      virus=True, position=point)
+            self.viruses = self.viruses + 1
+            self[point] = b
+            self.add(b)
+
 
 class Text(pygame.sprite.Sprite):
     def __init__(self, text, size, color, width, height):

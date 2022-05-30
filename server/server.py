@@ -1,4 +1,4 @@
-import logging
+
 import os
 import pickle
 from dataclasses import dataclass
@@ -19,8 +19,7 @@ from flask_sock import Sock
 from collections.abc import Iterable
 from attrdict import AttrDict
 
-COLORS = ['R', 'B', 'Y']
-
+import logging
 import logging.handlers
 
 logger = logging.getLogger("")
@@ -29,6 +28,8 @@ logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 # handler.setFormatter(formatter)
 logging.getLogger().addHandler(logging.StreamHandler())
+
+COLORS = ['R', 'B', 'Y']
 
 REDIS_URL = os.environ.get('REDIS_URL', "redis://localhost:6379")
 REDIS_TO_PLAY = 'ready_to_play'
@@ -99,7 +100,7 @@ class ServerBackend(object):
         game_id = str(uuid.uuid4())
         game = Game(game_id, client1_id=client1.id, client2_id=client2_id)
         update_game(game_id, game)
-        self.exec_method([client1.id, client2_id], Client.ack_gameid, game=game)
+        self.exec_method([client1.id, client2_id], Client.ack_gameid, game_id=game_id)
 
     def exec_method(self, client_ids: Union[str, Iterable], method: Callable, **kwargs):
         if isinstance(client_ids, str):
@@ -139,13 +140,15 @@ class Client:
         self.id = str(uuid.uuid4())
         self.socket = wsocket
         self.game = None
+        self.num = 0
 
     def acknowledge_id(self):
         self.send(cmd=0, client_id=self.id)
 
-    def ack_gameid(self, game: "Game"):
-        self.game = game
-        self.send(cmd=1, game_id=game.game_id)
+    def ack_gameid(self, game_id):
+        self.game = get_game(game_id)
+        self.num == 1 if self.game.client1_id == self.id else 2
+        self.send(cmd=1, game_id=game_id)
 
     def generate_viruses(self, virus_count):
         self.send(cmd=2, virus_count=virus_count)
@@ -179,9 +182,10 @@ class Client:
         """Send given data to the registered client.
         Automatically discards invalid connections."""
         try:
+            logging.debug(f"Sending msg to client_{self.num} {self.id} with cmd={cmd}")
             self.socket.send(json.dumps(dict(cmd=cmd, **data)))
         except Exception as e:
-            logging.error("Communication error", e)
+            logging.error("Communication error")
             # TODO close connection
             # self.clients.remove(client)
 

@@ -16,6 +16,8 @@ COLOR_NAMES = {
     YELLOW: "Y"
 }
 
+COLOR_SHORTS = {v: k for k, v in COLOR_NAMES.items()}
+
 COLORS = [RED, BLUE, YELLOW]
 
 
