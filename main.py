@@ -30,7 +30,7 @@ SCREEN_HEIGHT = 500
 def main():
     pygame.mixer.init()
     try:
-        fever_music = pygame.mixer.music.load("music_mp3/3 - Fever.mp3")
+        pygame.mixer.music.load("music_mp3/3 - Fever.mp3")
     except:
         print("ignore not found music")
 
@@ -132,7 +132,7 @@ def main():
             if pygame.K_RIGHT in keys:
                 pillow.move_right()
             if downkeys[pygame.K_DOWN]:
-                mult = 10
+                mult = 15
             if pygame.K_z in keys:
                 pillow.turn_uclw()
             if pygame.K_x in keys:
