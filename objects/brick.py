@@ -89,6 +89,7 @@ class Brick(pygame.sprite.Sprite):
         self.pillow = kwargs.get("pillow")
         self.virus = kwargs.get("virus", False)
         self.offset = offset
+        self.direction = kwargs.get("direction", Direction.NONE)
 
         # Draw the brick (a rectangle!)
         #
@@ -156,8 +157,11 @@ class Brick(pygame.sprite.Sprite):
         self.y = self.y + 1
 
     def set_direction(self, direction):
-        self.image = get_brick_img(self.color, direction, self.image.get_rect().height).copy()
-        self.rect = self.image.get_rect()
+        if self.direction != direction:
+            self.direction = direction
+            direction = None if direction == Direction.NONE else direction
+            self.image = get_brick_img(self.color, direction, self.image.get_rect().height).copy()
+            self.rect = self.image.get_rect()
 
     def update(self, *args: Any, **kwargs: Any) -> None:
         self.rect.x = self.x * (self.brick_size + 3) + self.offset[0]

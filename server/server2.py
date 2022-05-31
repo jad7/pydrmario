@@ -1,26 +1,22 @@
-
+import asyncio
+import json
+import logging
+import logging.handlers
 import os
 import pickle
+import random
+import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Union, Callable, Optional
 
-import gevent
-from gevent import monkey
-
-monkey.patch_all()
-import redis
-import random
-from redis_lock import Lock as RedisLock
-
-import json, uuid
-from flask import Flask
-from flask_sock import Sock
-from collections.abc import Iterable
+import aioredis
+import async_timeout
+import websockets
+from aioredis import Redis
+from aioredis_lock import RedisLock
 from attrdict import AttrDict
-
-import logging
-import logging.handlers
 
 logger = logging.getLogger("")
 logger.setLevel(logging.DEBUG)
@@ -36,25 +32,22 @@ REDIS_TO_PLAY = 'ready_to_play'
 REDIS_MSGS = 'messages'
 GAMES_PREFIX = 'games:v1:'
 
-app = Flask(__name__)
-app.debug = 'DEBUG' in os.environ
+redis: Optional[Redis] = None
+server: Optional["Server"] = None
 
-sockets = Sock(app)
-redis = redis.from_url(REDIS_URL)
-
-VIRUS_COUNT = 20
+VIRUS_COUNT = 10
 
 
-def get_game(game_id) -> Optional["Game"]:
-    data = redis.get(GAMES_PREFIX + game_id)
+async def get_game(game_id) -> Optional["Game"]:
+    data = await redis.get(GAMES_PREFIX + game_id)
     if data:
         return pickle.loads(data)
     else:
         return None
 
 
-def update_game(game_id, game: "Game"):
-    redis.set(GAMES_PREFIX + game_id, pickle.dumps(game), ex=timedelta(hours=1))
+async def update_game(game_id, game: "Game"):
+    await redis.set(GAMES_PREFIX + game_id, pickle.dumps(game), expire=timedelta(hours=1).seconds)
 
 
 class ServerBackend(object):
@@ -62,61 +55,63 @@ class ServerBackend(object):
 
     def __init__(self):
         self.clients = dict()
-        self.pubsub = redis.pubsub()
-        self.pubsub.subscribe(REDIS_MSGS)
 
-    def __iter_data(self):
-        for message in self.pubsub.listen():
-            data = message.get('data')
-            if message['type'] == 'message':
-                app.logger.info(u'Sending message: {}'.format(data))
-                yield AttrDict(json.loads(data))
+    async def __iter_data(self):
+        subscribe = await redis.subscribe(REDIS_MSGS)
+        while await subscribe[0].wait_message():
+            try:
+                async with async_timeout.timeout(1):
+                    message = await subscribe.get(encoding='utf-8')
+                    if message:
+                        data = message.get('data')
+                        if message['type'] == 'message':
+                            logger.info(u'Sending message: {}'.format(data))
+                            yield AttrDict(json.loads(data))
+                        await asyncio.sleep(0.01)
+            except asyncio.TimeoutError:
+                pass
 
-    def register_client(self, wsocket) -> "Client":
+    async def register_client(self, wsocket) -> "Client":
         client = Client(wsocket)
         self.clients[client.id] = client
-        client.acknowledge_id()
+        await client.acknowledge_id()
         logger.debug(f"Registered new client: {client.id}")
         return client
 
-    def add_to_waiters(self, waiter: "Client"):
-        redis.lpush(REDIS_TO_PLAY, json.dumps(waiter.id))
+    async def add_to_waiters(self, waiter: "Client"):
+        await redis.lpush(REDIS_TO_PLAY, json.dumps(waiter.id))
 
-    def run(self):
+    async def handle_pubsub(self):
+
         """Listens for new messages in Redis, and sends them to clients."""
-        for data in self.__iter_data():
+        task = None
+        async for data in self.__iter_data():
             if data.client_id in self.clients:
-                gevent.spawn(getattr(self.clients[data.client_id], data.method), **data.obj)
+                task = asyncio.create_task(getattr(self.clients[data.client_id], data.method)(**data.obj))
 
-    def find_partner(self):
-        id = redis.lpop(REDIS_TO_PLAY)
+    async def find_partner(self):
+        id = await redis.lpop(REDIS_TO_PLAY)
         return json.loads(id) if id else None
 
-    def start(self):
-        """Maintains Redis subscription in the background."""
-        gevent.spawn(self.run)
-
-    def start_game(self, client1: "Client", client2_id: str):
+    async def start_game(self, client1: "Client", client2_id: str):
         game_id = str(uuid.uuid4())
         game = Game(game_id, client1_id=client1.id, client2_id=client2_id)
-        update_game(game_id, game)
-        self.exec_method([client1.id, client2_id], Client.ack_gameid, game_id=game_id)
+        await update_game(game_id, game)
+        await self.exec_method([client1.id, client2_id], Client.ack_gameid, game_id=game_id)
 
-    def exec_method(self, client_ids: Union[str, Iterable], method: Callable, **kwargs):
+    async def exec_method(self, client_ids: Union[str, Iterable], method: Callable, **kwargs):
+        task = None
         if isinstance(client_ids, str):
             client_ids = [client_ids]
         for client_id in client_ids:
             if client_id in self.clients:
-                gevent.spawn(getattr(self.clients[client_id], method.__name__), **kwargs)
+                task = asyncio.create_task(getattr(self.clients[client_id], method.__name__)(**kwargs))
+                # await getattr(self.clients[client_id], method.__name__)(**kwargs)
             else:
                 redis.publish(REDIS_MSGS, json.dumps(dict(client_id=client_id, method=method.__name__, obj=kwargs)))
 
     def delete_client(self, id):
         del self.clients[id]
-
-
-server = ServerBackend()
-server.start()
 
 
 def generate_pillows():
@@ -142,34 +137,34 @@ class Client:
         self.game = None
         self.num = 0
 
-    def acknowledge_id(self):
-        self.send(cmd=0, client_id=self.id)
+    async def acknowledge_id(self):
+        await self.send(cmd=0, client_id=self.id)
 
-    def ack_gameid(self, game_id):
-        self.game = get_game(game_id)
+    async def ack_gameid(self, game_id):
+        self.game = await get_game(game_id)
         self.num = (1 if self.game.client1_id == self.id else 2)
-        self.send(cmd=1, game_id=game_id)
+        await self.send(cmd=1, game_id=game_id)
 
-    def generate_viruses(self, virus_count):
-        self.send(cmd=2, virus_count=virus_count)
+    async def generate_viruses(self, virus_count):
+        await self.send(cmd=2, virus_count=virus_count)
 
-    def start_ack(self):
-        self.send(cmd=4)
+    async def start_ack(self):
+        await self.send(cmd=4)
 
-    def set_viruses(self, viruses, pillows):
-        self.send(cmd=3, viruses=viruses, pillows=pillows)
+    async def set_viruses(self, viruses, pillows):
+        await self.send(cmd=3, viruses=viruses, pillows=pillows)
 
-    def send_changes(self, changes):
-        self.send(cmd=5, changes=changes)
+    async def send_changes(self, changes):
+        await self.send(cmd=5, changes=changes)
 
-    def win(self):
-        self.send(cmd=6)
+    async def win(self):
+        await self.send(cmd=6)
         self.socket.close()
         server.delete_client(self.id)
 
-    def loose(self):
-        self.send(cmd=7)
-        self.socket.close()
+    async def loose(self):
+        await self.send(cmd=7)
+        await self.socket.close()
         server.delete_client(self.id)
 
     def get_partner_id(self):
@@ -178,18 +173,18 @@ class Client:
             clients.remove(self.id)
             return clients[0]
 
-    def send(self, cmd: int, **data):
+    async def send(self, cmd: int, **data):
         """Send given data to the registered client.
         Automatically discards invalid connections."""
         try:
             logging.debug(f"Sending msg to client_{self.num} {self.id} with cmd={cmd}")
-            self.socket.send(json.dumps(dict(cmd=cmd, **data)))
+            await self.socket.send(json.dumps(dict(cmd=cmd, **data)))
         except Exception as e:
             logging.error("Communication error")
             # TODO close connection
             # self.clients.remove(client)
 
-    def handle_message(self, msg):
+    async def handle_message(self, msg):
         """
         msg = {
         cmd : int
@@ -208,45 +203,46 @@ class Client:
         if game_id := msg_obj.game_id:
             logging.debug(f"GameId: {game_id}, ClientId: {self.id}, msg: {str(msg)}")
             if msg_obj.cmd == 0:
-                with RedisLock(redis, "game_lock:" + game_id, id=self.id):
-                    game: Game = get_game(game_id)
+                async with RedisLock(redis, "game_lock:" + game_id):
+                    game: Game = await get_game(game_id)
                     game.ack_ready(msg_obj.client_id, 1)
-                    update_game(game_id, game)
+                    await update_game(game_id, game)
                 if game and game.is_both_acc(1):
-                    server.exec_method(game.client1_id, Client.generate_viruses, virus_count=VIRUS_COUNT)
+                    await server.exec_method(game.client1_id, Client.generate_viruses, virus_count=VIRUS_COUNT)
             elif msg_obj.cmd == 1:
                 pillows = generate_pillows()
-                self.set_viruses(viruses=None, pillows=pillows)
-                server.exec_method(self.get_partner_id(), Client.set_viruses, viruses=msg_obj.viruses, pillows=pillows)
+                await self.set_viruses(viruses=None, pillows=pillows)
+                await server.exec_method(self.get_partner_id(), Client.set_viruses, viruses=msg_obj.viruses,
+                                         pillows=pillows)
 
             elif msg_obj.cmd == 2:
-                with RedisLock(redis, "game_lock:" + game_id, id=self.id):
-                    game: Game = get_game(game_id)
+                async with RedisLock(redis, "game_lock:" + game_id):
+                    game: Game = await get_game(game_id)
                     game.ack_ready(msg_obj.client_id, 2)
-                    update_game(game_id, game)
+                    await update_game(game_id, game)
                 if game and game.is_both_acc(2):
-                    server.exec_method(self.game.clients(), Client.start_ack)
+                    await server.exec_method(self.game.clients(), Client.start_ack)
             elif msg_obj.cmd == 3:
-                server.exec_method(self.get_partner_id(), Client.send_changes, changes=msg_obj.changes)
+                await server.exec_method(self.get_partner_id(), Client.send_changes, changes=msg_obj.changes)
             elif msg_obj.cmd == 4:
-                with RedisLock(redis, "game_lock:" + game_id, id=self.id):
-                    game: Game = get_game(game_id)
+                async with RedisLock(redis, "game_lock:" + game_id):
+                    game: Game = await get_game(game_id)
                     if game.win is None:
                         game.win = self.id
-                    update_game(game_id, game)
+                    await update_game(game_id, game)
                 if game.win == self.id:
-                    self.win()
-                    server.exec_method(self.get_partner_id(), Client.loose)
+                    await self.win()
+                    await server.exec_method(self.get_partner_id(), Client.loose)
             return True
         elif msg_obj.cmd == 5:
             with RedisLock(redis, "game_lock:" + game_id, id=self.id):
-                game: Game = get_game(game_id)
+                game: Game = await get_game(game_id)
                 if game.win is None:
                     game.win = self.get_partner_id()
-                update_game(game_id, game)
+                await update_game(game_id, game)
             if game.win == self.get_partner_id():
-                self.loose()
-                server.exec_method(self.get_partner_id(), Client.win)
+                await self.loose()
+                await server.exec_method(self.get_partner_id(), Client.win)
         return True
 
 
@@ -281,31 +277,23 @@ class Game:
         return [self.client1_id, self.client2_id]
 
 
-@app.route('/')
-def hello():
-    return "Hi!"
-
-
-@sockets.route('/connect')
-def connect(ws, *args, **kwargs):
+async def reactor(ws):
     logging.info("New connection" + str(ws))
     """Connect client"""
-    client: Client = server.register_client(ws)
-    partner_id = server.find_partner()
+    client: Client = await server.register_client(ws)
+    partner_id = await server.find_partner()
     if partner_id:
         logger.debug(f"For client {client.id} found partner {partner_id}")
-        server.start_game(client, partner_id)
+        await server.start_game(client, partner_id)
     else:
-        server.add_to_waiters(client)
-
-    while ws.connected:
-        # Sleep to prevent *constant* context-switches.
-        gevent.sleep(0.1)
-        message = ws.receive()
+        await server.add_to_waiters(client)
+    async for message in ws:
         try:
-            if not client.handle_message(message):
+            if not await client.handle_message(message):
                 ws.close()
                 return
+        except websockets.ConnectionClosedOK:
+            break
         except Exception as e:
             logging.error("handling error", e)
 
@@ -317,4 +305,13 @@ if __name__ == "__main__":
     # from gevent.pywsgi import WSGIServer
     # server = WSGIServer(('127.0.0.1', 5001), app)
     # server.serve_forever()
-    app.run('127.0.0.1', 5001)
+    async def main():
+        global redis, server
+        redis = await aioredis.create_redis_pool(REDIS_URL)
+        server = ServerBackend()
+        async with websockets.serve(reactor, "localhost", 5001):
+            await server.handle_pubsub()
+            await asyncio.Future()  # run forever
+
+
+    asyncio.run(main())

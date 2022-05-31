@@ -220,6 +220,7 @@ class Bottle(pygame.sprite.Group):
             br = self.id_index[moved.id]
             self[br.position] = None
             br.position = moved.position
+            br.set_direction(Direction(moved.direction))
             self[br.position] = br
 
 
@@ -229,7 +230,7 @@ class Text(pygame.sprite.Sprite):
         pygame.sprite.Sprite.__init__(self)
 
         self.font = pygame.font.SysFont("Comic Sans MS", size)
-        self.textSurf = self.font.render(text, 1, color)
+        self.textSurf = self.font.render(text, True, color)
         self.image = pygame.Surface((width, height))
         W = self.textSurf.get_width()
         H = self.textSurf.get_height()
@@ -238,8 +239,10 @@ class Text(pygame.sprite.Sprite):
 
 
 def to_cbrick(brick: Brick) -> CBrick:
-    return CBrick(brick.id, brick.position, COLOR_NAMES[brick.color], virus=brick.virus)
+    return CBrick(brick.id, brick.position, COLOR_NAMES[brick.color], virus=brick.virus,
+                  direction=brick.direction.value if brick.direction else None)
 
 
-def to_br(brick: CBrick, size, offset) -> CBrick:
-    return Brick(COLOR_SHORTS[brick.color], size, size, offset, id=brick.id, position=brick.position, virus=brick.virus)
+def to_br(brick: CBrick, size, offset) -> Brick:
+    return Brick(COLOR_SHORTS[brick.color], size, size, offset, id=brick.id, position=brick.position, virus=brick.virus,
+                 direction=brick.direction)

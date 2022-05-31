@@ -22,6 +22,7 @@ COLORS = [RED, BLUE, YELLOW]
 
 
 class Direction(Enum):
+    NONE = None
     LEFT = 1
     RIGHT = 2
     TOP = 3

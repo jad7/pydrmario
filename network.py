@@ -30,7 +30,7 @@ pygame.font.init()
 
 bottle_offset = (50, 100)
 brick_size = 20
-virus_offset = 5
+virus_offset = 10
 
 mute = True
 next_pillow_offset = (bottle_offset[0] + X * brick_size + 20, 10)
@@ -213,7 +213,9 @@ def main():
 
             pillow = None
             # next_pillow = Pillow.create(brick_size, [0, 0])
+            bottle.capture_changes = False
             bottle.populate_viruses(VIRUSES_COUNT, virus_offset)
+            bottle.capture_changes = True
             sending_queue.put_nowait(dict(cmd=1, viruses=bottle.get_viruses()))
             if not mute:
                 pygame.mixer.music.play(-1)
@@ -300,6 +302,7 @@ def main():
         elif state == 7:
             sending_queue.put_nowait(dict(cmd=7))
             bottle.end(win=False)
+            state = -3
             if keys:
                 if pygame.K_RETURN in keys:
                     state = -3

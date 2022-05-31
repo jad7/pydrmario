@@ -237,7 +237,7 @@ class Pillow:
             return
         if not br1 or not br2:
             br = br1 or br2
-            br.set_direction(None)
+            br.set_direction(Direction.NONE)
         elif self.is_horz():
             left, right = (br1, br2) if self.position == 0 else (br2, br1)
             left.set_direction(Direction.LEFT)

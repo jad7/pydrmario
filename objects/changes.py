@@ -10,6 +10,7 @@ class CBrick(DataClassDictMixin):
     position: List = field(default_factory=[None, None])
     color: str = None
     virus: bool = False
+    direction: int = None
 
     def __setitem__(self, key, value):
         if isinstance(key, Tuple):
