@@ -46,6 +46,8 @@ def get_brick_img(color, direction: Optional[Direction], size):
 
 
 viruses = {}
+
+
 def init():
     global viruses
     viruses = {
@@ -58,7 +60,10 @@ def init():
         img.set_colorkey((0, 0, 0))
 
 
+ID = 0
+
 class Brick(pygame.sprite.Sprite):
+
     # This class represents a brick. It derives from the "Sprite" class in Pygame.
 
     def __init__(self, color, width, height, offset, **kwargs):
@@ -67,6 +72,14 @@ class Brick(pygame.sprite.Sprite):
 
         # Pass in the color of the brick, and its x and y position, width and height.
         # Set the background color and set it to be transparent
+        global ID
+        arg_id = kwargs.get("id")
+        if arg_id is not None:
+            self.id = arg_id
+            ID = max(ID, arg_id) + 1
+        else:
+            self.id = ID
+            ID = ID + 1
         self.color = color
         self.brick_size = width
 

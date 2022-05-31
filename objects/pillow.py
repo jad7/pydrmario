@@ -30,10 +30,13 @@ class Pillow:
 
     def add_to_bottle(self, bottle, position):
         self.bottle = bottle
-        bottle.bottle[position[0]][position[1]] = self.brick1
-        bottle.bottle[position[0] + 1][position[1]] = self.brick2
-        self.brick1.position = [position[0], position[1]]
-        self.brick2.position = [position[0] + 1, position[1]]
+        if bottle[position[0], position[1]] is None and bottle[position[0] + 1, position[1]] is None:
+            bottle[position[0], position[1]] = self.brick1
+            bottle[position[0] + 1, position[1]] = self.brick2
+            self.brick1.position = [position[0], position[1]]
+            self.brick2.position = [position[0] + 1, position[1]]
+            return True
+        return False
 
     def move_down(self) -> bool:
         b = self.bottle
@@ -44,18 +47,23 @@ class Pillow:
             br = br1 or br2
             if br.can_down(b):
                 br.move_down(b)
+                self.bottle.register_moved(br)
                 return True
 
         elif self.is_horz():
             if br1.can_down(b) and br2.can_down(b):
                 br1.move_down(b)
+                self.bottle.register_moved(br1)
                 br2.move_down(b)
+                self.bottle.register_moved(br2)
                 return True
         else:
             upper, lower = (br1, br2) if self.position == 1 else (br2, br1)
             if lower.can_down(b):
                 lower.move_down(b)
+                self.bottle.register_moved(lower)
                 upper.move_down(b)
+                self.bottle.register_moved(upper)
                 return True
 
         return False
@@ -88,10 +96,14 @@ class Pillow:
             left, right = (br1, br2) if self.position == 0 else (br2, br1)
             if left.can_left(b):
                 left.move_left(b)
+                self.bottle.register_moved(left)
                 right.move_left(b)
+                self.bottle.register_moved(right)
         elif br1.can_left(b) and br2.can_left(b):
             br1.move_left(b)
+            self.bottle.register_moved(br1)
             br2.move_left(b)
+            self.bottle.register_moved(br1)
 
     def move_right(self):
         b = self.bottle
@@ -102,10 +114,14 @@ class Pillow:
             left, right = (br1, br2) if self.position == 0 else (br2, br1)
             if right.can_right(b):
                 right.move_right(b)
+                self.bottle.register_moved(right)
                 left.move_right(b)
+                self.bottle.register_moved(left)
         elif br1.can_right(b) and br2.can_right(b):
             br1.move_right(b)
+            self.bottle.register_moved(br1)
             br2.move_right(b)
+            self.bottle.register_moved(br1)
 
     '''
     z -> 
@@ -139,18 +155,23 @@ class Pillow:
             left, right = (br1, br2) if self.position == 0 else (br2, br1)
             if left.y == 0 or b[left.x, left.y - 1] is None:
                 left.move_up(b)
+                self.bottle.register_moved(left)
                 right.move_left(b)
+                self.bottle.register_moved(right)
                 self.position = self.position + 1
                 self.update_position()
         else:
             upper, lower = (br1, br2) if self.position == 1 else (br2, br1)
             if lower.can_right(b):
                 upper.move_right_down(b)
+                self.bottle.register_moved(upper)
                 self.position = (self.position + 1) % 4
                 self.update_position()
             elif lower.can_left(b):
                 lower.move_left(b)
+                self.bottle.register_moved(lower)
                 upper.move_down(b)
+                self.bottle.register_moved(upper)
                 self.position = (self.position + 1) % 4
                 self.update_position()
 
@@ -180,11 +201,14 @@ class Pillow:
             upper, lower = (br1, br2) if self.position == 1 else (br2, br1)
             if lower.can_right(b):
                 lower.move_right(b)
+                self.bottle.register_moved(lower)
                 upper.move_down(b)
+                self.bottle.register_moved(upper)
                 self.position = self.position - 1
                 self.update_position()
             elif lower.can_left(b):
                 upper.move_left_down(b)
+                self.bottle.register_moved(upper)
                 self.position = self.position - 1
                 self.update_position()
 

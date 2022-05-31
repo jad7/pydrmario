@@ -201,7 +201,8 @@ class Client:
         1-viruses
         2-all start ready
         3-send changes
-        4-done
+        4-done win
+        5-done loose
         """
         msg_obj = AttrDict(json.loads(msg))
         if game_id := msg_obj.game_id:
@@ -237,6 +238,16 @@ class Client:
                     self.win()
                     server.exec_method(self.get_partner_id(), Client.loose)
             return True
+        elif msg_obj.cmd == 5:
+            with RedisLock(redis, "game_lock:" + game_id, id=self.id):
+                game: Game = get_game(game_id)
+                if game.win is None:
+                    game.win = self.get_partner_id()
+                update_game(game_id, game)
+            if game.win == self.get_partner_id():
+                self.loose()
+                server.exec_method(self.get_partner_id(), Client.win)
+        return True
 
 
 @dataclass

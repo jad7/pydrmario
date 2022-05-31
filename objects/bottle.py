@@ -1,16 +1,18 @@
 import itertools
 import random
 from builtins import set
+from collections.abc import Iterable
 from typing import Tuple, List, Set, Any
 
 import pygame
 
 from constants import *
 from .brick import Brick
+from .changes import Changes, CBrick
 
 
 class Bottle(pygame.sprite.Group):
-    def __init__(self, X, Y, brick_size, bottle_surface, *sprites):
+    def __init__(self, X, Y, brick_size, bottle_surface, capture_changes=False, *sprites):
         super().__init__(*sprites)
         self.offset = [0, -brick_size]
         self.X = X
@@ -21,6 +23,9 @@ class Bottle(pygame.sprite.Group):
         self.viruses = 0
         self.surf = bottle_surface
         self.pause_text = Text("Pause!", 30, BLUE, int(self.X * self.brick_size / 2), int(self.Y * self.brick_size / 2))
+        self.capture_changes = capture_changes
+        self.changes = Changes()
+        self.id_index = dict()
 
     def update(self, *args: Any, **kwargs: Any) -> None:
         super().update()
@@ -38,6 +43,7 @@ class Bottle(pygame.sprite.Group):
                 b = Brick(COLORS[int(random.random() * len(COLORS))], self.brick_size, self.brick_size, self.offset,
                           virus=True, position=point)
                 new_bricks.append(b)
+                self.id_index[b.id] = b
                 self.viruses = self.viruses + 1
                 self[point] = b
                 self.add(b)
@@ -47,9 +53,16 @@ class Bottle(pygame.sprite.Group):
 
     def add_pillow(self, pillow: "Pillow"):
         pillow.update_offset(self.offset)
-        pillow.add_to_bottle(self, (3, 1))
-        self.add(pillow.bricks())
-        return pillow
+        if pillow.add_to_bottle(self, (3, 1)):
+            for brick in pillow.bricks():
+                self.add(brick)
+                self.id_index[brick.id] = brick
+
+            if self.capture_changes:
+                self.changes.added.append(list(map(to_cbrick, pillow.bricks())))
+            return pillow
+        else:
+            return None
 
     def __getitem__(self, item):
         if isinstance(item, Point):
@@ -59,13 +72,12 @@ class Bottle(pygame.sprite.Group):
         return self.bottle[item]
 
     def __setitem__(self, key, value):
-        if isinstance(key, Tuple):
+        if isinstance(key, Iterable):
             self.bottle[key[0]][key[1]] = value
             return
         self.bottle[key] = value
 
     def burn(self, *pillows: 'Pillow'):
-        # print("start burn")
         bricks = filter(lambda z: z, list(itertools.chain(*[p.bricks() for p in pillows])))
         return self.burn_bricks(bricks)
 
@@ -74,16 +86,22 @@ class Bottle(pygame.sprite.Group):
         for b in bricks:
             t.update(self._burn(b, max_count))
         for point in t:
-            br = self[point]
-            self[point] = None
-            br.kill()
-            if br.is_virus():
-                self.viruses = self.viruses - 1
+            self.kill_br(point)
         # print("end burn")
         # if sum(1 for Ys in self.bottle for x in Ys if x and x.is_virus()) != self.viruses:
         #    print("Here error")
 
         return t
+
+    def kill_br(self, point):
+        br: Brick = self[point]
+        self[point] = None
+        self.id_index.pop(br.id)
+        br.kill()
+        if self.capture_changes:
+            self.changes.killed.append(to_cbrick(br))
+        if br.is_virus():
+            self.viruses = self.viruses - 1
 
     def _burn(self, br: 'Brick', max_count=4) -> List[Point]:
         if not br:
@@ -123,7 +141,6 @@ class Bottle(pygame.sprite.Group):
         return self.viruses
 
     def fallout(self) -> List[Point]:
-        print("start fallout")
         visited = set()
         step_not_made = []
         falled = []
@@ -141,15 +158,15 @@ class Bottle(pygame.sprite.Group):
             for pillow in step_not_made:
                 if pillow.move_down():
                     falled.append(pillow)
-        print("end fallout")
         return falled
 
-    def end(self):
+    def end(self, win: bool = True):
         self.empty()
         self.viruses = 0
         # my_font = pygame.font.SysFont('Comic Sans MS', 30)
         # text_surface = my_font.render('Done!', False, BLUE)
-        self.add(Text("Done!", 30, BLUE, int(self.X * self.brick_size / 2), int(self.Y * self.brick_size / 2)))
+        self.add(Text("Win!" if win else "Loose", 30, BLUE, int(self.X * self.brick_size / 2),
+                      int(self.Y * self.brick_size / 2)))
         # self.image = pygame.Surface([width, height])
         # self.image.fill(color)
         # self.image.set_colorkey(BLACK)
@@ -165,17 +182,45 @@ class Bottle(pygame.sprite.Group):
         for y in range(self.Y):
             for x in range(self.X):
                 if self[x, y] and self[x, y].is_virus():
-                    res.append((x, y, COLOR_NAMES[self[x, y].color]))
+                    res.append(to_cbrick(self[x, y]).to_dict())
         return res
 
-    def set_viruses(self, viruses: List[Tuple[int, int, str]]):
+    def set_viruses(self, viruses):
         for virus in viruses:
-            point = Point(virus[0], virus[1])
-            b = Brick(COLOR_SHORTS[virus[2]], self.brick_size, self.brick_size, self.offset,
-                      virus=True, position=point)
+            if not isinstance(virus, CBrick):
+                virus = CBrick.from_dict(virus)
+            b = to_br(virus, self.brick_size, self.offset)
             self.viruses = self.viruses + 1
-            self[point] = b
+            self[b.x, b.y] = b
+            self.id_index[b.id] = b
             self.add(b)
+
+    def register_moved(self, br: Brick):
+        if self.capture_changes:
+            self.changes.moved.append(to_cbrick(br))
+
+    def pop_changes(self):
+        res = self.changes
+        self.changes = Changes()
+        return res
+
+    def apply_changes(self, changes_dict):
+        # TODO change import
+        from .pillow import Pillow
+        changes: Changes = Changes.from_dict(changes_dict)
+        for killed in changes.killed:
+            br = self.id_index[killed.id]
+            self.kill_br(Point(br.x, br.y))
+        for added in changes.added:
+            self.add_pillow(Pillow(
+                to_br(added[0], self.brick_size, self.offset),
+                to_br(added[1], self.brick_size, self.offset)
+            ))
+        for moved in changes.moved:
+            br = self.id_index[moved.id]
+            self[br.position] = None
+            br.position = moved.position
+            self[br.position] = br
 
 
 class Text(pygame.sprite.Sprite):
@@ -190,3 +235,11 @@ class Text(pygame.sprite.Sprite):
         H = self.textSurf.get_height()
         self.image.blit(self.textSurf, [width / 2 - W / 2, height / 2 - H / 2])
         self.rect = self.image.get_rect()
+
+
+def to_cbrick(brick: Brick) -> CBrick:
+    return CBrick(brick.id, brick.position, COLOR_NAMES[brick.color], virus=brick.virus)
+
+
+def to_br(brick: CBrick, size, offset) -> CBrick:
+    return Brick(COLOR_SHORTS[brick.color], size, size, offset, id=brick.id, position=brick.position, virus=brick.virus)

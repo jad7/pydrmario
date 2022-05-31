@@ -57,7 +57,7 @@ def main():
             try:
                 get = sending_queue.get()
                 msg = await asyncio.wait_for(get, timeout=1)
-                print(f"Sending {str(get)}")
+                print(f"Sending {str(msg)}")
             except asyncio.TimeoutError:
                 pass
             else:
@@ -123,7 +123,8 @@ def main():
 
     viruses_init()
 
-    tick = 10 * 3
+    # tick = 10 * 3
+    tick = 5 * 1
 
     running = True
 
@@ -177,7 +178,7 @@ def main():
                     client_id = data['client_id']
                 elif cmd == 1:
                     game_id = data['game_id']
-                    bottle = Bottle(X, Y, brick_size, bottle_surf)
+                    bottle = Bottle(X, Y, brick_size, bottle_surf, capture_changes=True)
                     bottle2 = Bottle(X, Y, brick_size, bottle_surf2)
                     sending_queue.put_nowait(dict(cmd=0))
                 elif cmd == 2:
@@ -195,10 +196,10 @@ def main():
                 elif cmd == 4:
                     state = -2
                 elif cmd == 5:
-                    changes = data['changes']
+                    bottle2.apply_changes(data['changes'])
                 elif cmd == 6 or cmd == 7:
                     state = 5
-                    STOP = True
+                    STOP.append(1)
 
         events_raw = pygame.event.get(eventtype=KEYDOWN)
         keys = {event.key: event for event in events_raw}
@@ -233,11 +234,12 @@ def main():
                     brick_size, [0, 0])
 
             pillow = bottle.add_pillow(next_pillow)
-            next_pillow = Pillow.from_data(pillows.pop(), brick_size, [0, 0]) if pillows else Pillow.create(brick_size,
-                                                                                                            [0, 0])
+            state = 1 if pillow else 7
+            next_pillow = Pillow.from_data(pillows.pop(), brick_size, [0, 0]) if pillows \
+                else Pillow.create(brick_size, [0, 0])
             # next_pillow =
             # bottle.add(*next_pillow.bricks())
-            state = 1
+
         elif state == 1:
             downkeys = pygame.key.get_pressed()
             if pygame.K_q in keys:
@@ -295,9 +297,19 @@ def main():
             if pygame.K_RETURN in keys:
                 state = pause_state
                 bottle.unpause()
+        elif state == 7:
+            sending_queue.put_nowait(dict(cmd=7))
+            bottle.end(win=False)
+            if keys:
+                if pygame.K_RETURN in keys:
+                    state = -3
 
         if bottle:
             bottle.update()
+            if bottle.changes.has_changes():
+                to_send = bottle.pop_changes().to_dict()
+                sending_queue.put_nowait(dict(cmd=3, changes=to_send))
+
         if bottle2:
             bottle2.update()
         if next_pillow:
