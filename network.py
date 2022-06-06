@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging.handlers
+import pickle
 import threading
 
 import pygame
@@ -14,8 +15,12 @@ from pygame.locals import (
 from constants import *
 from objects.bottle import Bottle
 from objects.brick import init as viruses_init
+from objects.changes import CBrick
 from objects.draw import draw_bg
 from objects.pillow import Pillow
+
+debug = False
+serializer = json if debug else pickle
 
 logger = logging.getLogger("")
 logger.setLevel(logging.DEBUG)
@@ -38,6 +43,40 @@ next_pillow_offset = (bottle_offset[0] + X * brick_size + 20, 10)
 SCREEN_WIDTH = 600
 SCREEN_HEIGHT = 500
 
+viewer = 1
+
+
+class Queue:
+    def __init__(self):
+        self._loop = asyncio.get_event_loop()
+        self._queue = asyncio.Queue()
+
+    def sync_put_nowait(self, item):
+        self._loop.call_soon(self._queue.put_nowait, item)
+
+    def sync_put(self, item):
+        asyncio.run_coroutine_threadsafe(self._queue.put(item), self._loop).result()
+
+    def sync_get(self):
+        return asyncio.run_coroutine_threadsafe(self._queue.get(), self._loop).result()
+
+    def async_put_nowait(self, item):
+        self._queue.put_nowait(item)
+
+    async def async_put(self, item):
+        await self._queue.put(item)
+
+    async def async_get(self):
+        return await self._queue.get()
+
+    async def get(self):
+        # return asyncio.run_coroutine_threadsafe(self._queue.get(), self._loop).result()
+        return self._queue.get()
+
+    def put_nowait(self, item):
+        # self._loop.call_soon(self._queue.put_nowait, item)
+        self._queue.put_nowait(item)
+
 
 def main():
     pygame.mixer.init()
@@ -47,30 +86,39 @@ def main():
         print("ignore not found music")
     VIRUSES_COUNT = 84
     SERVER_EVENT = pygame.event.custom_type()
-    sending_queue = asyncio.Queue()
+    sending_queue = []
+    receiving_queue = []
     client_id = None
     game_id = None
     STOP = []
 
     async def send_to_ws(ws, stop):
-        while not STOP:
-            try:
-                get = sending_queue.get()
-                msg = await asyncio.wait_for(get, timeout=1)
-                print(f"Sending {str(msg)}")
-            except asyncio.TimeoutError:
-                pass
-            else:
-                await ws.send(json.dumps(dict(client_id=client_id, game_id=game_id, **msg)))
+        logger.debug(f"Sender started stop:{stop}")
+        try:
+            while True:
+                while sending_queue:
+                    msg = sending_queue.pop()
+                    print(f"Sending {str(msg)}")
+                    await ws.send(serializer.dumps(dict(client_id=client_id, game_id=game_id, **msg)))
+                await asyncio.sleep(0)
+        finally:
+            logger.debug(f"Sender stopped: {stop}")
 
-    async def handle_socket(loop, stop):
+    async def handle_socket(stop):
         async with websockets.connect(
                 'ws://localhost:5001/connect') as ws:
+            await asyncio.gather(
+                receive_from_ws(stop, ws),
+                send_to_ws(ws, stop),
+            )
 
-            loop.create_task(send_to_ws(ws, stop))
-            while not stop:
+    async def receive_from_ws(stop, ws):
+        logger.debug(f"Receiver started stop:{stop}")
+        try:
+            while True:
                 try:
                     msg = await asyncio.wait_for(ws.recv(), timeout=20)
+                    logger.debug(f"Received: {msg}")
                 except asyncio.TimeoutError:
                     # No data in 20 seconds, check the connection.
                     try:
@@ -82,13 +130,16 @@ def main():
                         # No response to ping in 10 seconds, disconnect.
                         break
                 else:
-                    pygame.event.post(pygame.event.Event(SERVER_EVENT, data=json.loads(msg)))
+                    # receiving_queue.async_q.put_nowait(dict(data=serializer.loads(msg)))
+                    receiving_queue.append(dict(data=serializer.loads(msg)))
+                    # pygame.event.post(pygame.event.Event(SERVER_EVENT, data=serializer.loads(msg)))
+        finally:
+            logger.debug(f"Receiver stopped stop:{stop}")
 
-    def start_client(loop):
-        loop.run_until_complete(handle_socket(loop, STOP))
+    def start_client():
+        asyncio.run(handle_socket(STOP))
 
-    loop = asyncio.get_event_loop()
-    thread = threading.Thread(target=start_client, args=(loop,))
+    thread = threading.Thread(target=start_client)
     thread.start()
 
     # Create the screen object
@@ -139,6 +190,7 @@ def main():
     delay_before_start = 10
     num = 0
     pillows = []
+    step = 0
 
     def delay(actions_per_second):
         nonlocal num
@@ -150,6 +202,7 @@ def main():
 
     # pygame.key.set_repeat(200, 200)
     while running:
+        step = step + 1
         mult = 0
         keys = set()
         quit_events = pygame.event.get(eventtype=QUIT)
@@ -157,10 +210,16 @@ def main():
             running = False
             STOP.append(1)
 
-        server_events = pygame.event.get(eventtype=SERVER_EVENT)
-
-        if server_events:
-            for event in server_events:
+        # server_events = pygame.event.get(eventtype=SERVER_EVENT)
+        if receiving_queue:
+            events = []
+            while receiving_queue:
+                events.append(receiving_queue.pop()['data'])
+            events.sort(key=lambda x: x.get("step", 0))
+            # event = receiving_queue.sync_q.get_nowait()
+            for data in events:
+                # if server_events:
+                #    for event in server_events:
                 """
                 0 - acknowledge client_id
                 1 - acknowledge game_id
@@ -171,8 +230,8 @@ def main():
                 6 - win
                 7 - loose
                 """
-                data = event.data
-                logger.debug(f"Received server event: {event.data}")
+                # data = event['data']
+                logger.debug(f"Received server event: {data}")
                 cmd = data.get('cmd')
                 if cmd == 0:
                     client_id = data['client_id']
@@ -180,19 +239,24 @@ def main():
                     game_id = data['game_id']
                     bottle = Bottle(X, Y, brick_size, bottle_surf, capture_changes=True)
                     bottle2 = Bottle(X, Y, brick_size, bottle_surf2)
-                    sending_queue.put_nowait(dict(cmd=0))
+                    sending_queue.append(dict(cmd=0))
+                    # sending_queue.sync_q.put(dict(cmd=0))
                 elif cmd == 2:
                     VIRUSES_COUNT = data['virus_count']
                     state = -1
                 elif cmd == 3:
                     if data['viruses']:
-                        bottle.set_viruses(data['viruses'])
-                        bottle2.set_viruses(data['viruses'])
+                        viruses = data['viruses']
+                        if debug:
+                            viruses = [CBrick.from_dict(v) for v in viruses]
+                        bottle.set_viruses(viruses)
+                        bottle2.set_viruses(viruses)
                     else:
                         bottle2.set_viruses(bottle.get_viruses())
 
                     pillows = data['pillows']
-                    sending_queue.put_nowait(dict(cmd=2))
+                    # sending_queue.sync_q.put(dict(cmd=2))
+                    sending_queue.append(dict(cmd=2))
                 elif cmd == 4:
                     state = -2
                 elif cmd == 5:
@@ -216,7 +280,11 @@ def main():
             bottle.capture_changes = False
             bottle.populate_viruses(VIRUSES_COUNT, virus_offset)
             bottle.capture_changes = True
-            sending_queue.put_nowait(dict(cmd=1, viruses=bottle.get_viruses()))
+            viruses = bottle.get_viruses()
+            if debug:
+                viruses = [v.to_dict() for v in viruses]
+            # sending_queue.sync_q.put(dict(cmd=1, viruses=viruses))
+            sending_queue.append(dict(cmd=1, viruses=viruses))
             if not mute:
                 pygame.mixer.music.play(-1)
             state = -3
@@ -265,7 +333,7 @@ def main():
 
             if delay(2 + mult):
                 if pillow and not pillow.move_down():
-                    state = 2
+                    state = 2 if not viewer else -3
 
         elif state == 2:
             if delay(4):
@@ -290,7 +358,7 @@ def main():
             falled.clear()
 
         elif state == 5:
-            sending_queue.put_nowait(dict(cmd=4))
+            sending_queue.append(dict(cmd=4))
             bottle.end()
             if keys:
                 if pygame.K_RETURN in keys:
@@ -300,7 +368,7 @@ def main():
                 state = pause_state
                 bottle.unpause()
         elif state == 7:
-            sending_queue.put_nowait(dict(cmd=7))
+            sending_queue.append(dict(cmd=7))
             bottle.end(win=False)
             state = -3
             if keys:
@@ -310,8 +378,9 @@ def main():
         if bottle:
             bottle.update()
             if bottle.changes.has_changes():
-                to_send = bottle.pop_changes().to_dict()
-                sending_queue.put_nowait(dict(cmd=3, changes=to_send))
+                changes = bottle.pop_changes()
+                to_send = changes.to_dict() if debug else changes
+                sending_queue.append(dict(cmd=3, step=step, changes=to_send))
 
         if bottle2:
             bottle2.update()

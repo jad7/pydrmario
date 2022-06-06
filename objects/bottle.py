@@ -182,13 +182,13 @@ class Bottle(pygame.sprite.Group):
         for y in range(self.Y):
             for x in range(self.X):
                 if self[x, y] and self[x, y].is_virus():
-                    res.append(to_cbrick(self[x, y]).to_dict())
+                    res.append(to_cbrick(self[x, y]))
         return res
 
-    def set_viruses(self, viruses):
+    def set_viruses(self, viruses: List[CBrick]):
         for virus in viruses:
-            if not isinstance(virus, CBrick):
-                virus = CBrick.from_dict(virus)
+            # if not isinstance(virus, CBrick):
+            #    virus = CBrick.from_dict(virus)
             b = to_br(virus, self.brick_size, self.offset)
             self.viruses = self.viruses + 1
             self[b.x, b.y] = b
@@ -204,10 +204,8 @@ class Bottle(pygame.sprite.Group):
         self.changes = Changes()
         return res
 
-    def apply_changes(self, changes_dict):
-        # TODO change import
+    def apply_changes(self, changes):
         from .pillow import Pillow
-        changes: Changes = Changes.from_dict(changes_dict)
         for killed in changes.killed:
             br = self.id_index[killed.id]
             self.kill_br(Point(br.x, br.y))

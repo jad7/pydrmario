@@ -5,6 +5,7 @@ import logging.handlers
 import os
 import pickle
 import random
+import signal
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -16,10 +17,13 @@ import async_timeout
 import websockets
 from aioredis import Redis
 from aioredis_lock import RedisLock
+# from aioredlock import Aioredlock, LockError
 from attrdict import AttrDict
 
 logger = logging.getLogger("")
 logger.setLevel(logging.DEBUG)
+debug = False
+serializer = json if debug else pickle
 
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 # handler.setFormatter(formatter)
@@ -27,7 +31,7 @@ logging.getLogger().addHandler(logging.StreamHandler())
 
 COLORS = ['R', 'B', 'Y']
 
-REDIS_URL = os.environ.get('REDIS_URL', "redis://localhost:6379")
+REDIS_URL = os.environ.get("REDISCLOUD_URL", os.environ.get('REDIS_URL', "redis://localhost:6379"))
 REDIS_TO_PLAY = 'ready_to_play'
 REDIS_MSGS = 'messages'
 GAMES_PREFIX = 'games:v1:'
@@ -61,12 +65,12 @@ class ServerBackend(object):
         while await subscribe[0].wait_message():
             try:
                 async with async_timeout.timeout(1):
-                    message = await subscribe.get(encoding='utf-8')
+                    message = await subscribe[0].get(encoding='utf-8')
                     if message:
                         data = message.get('data')
                         if message['type'] == 'message':
                             logger.info(u'Sending message: {}'.format(data))
-                            yield AttrDict(json.loads(data))
+                            yield AttrDict(serializer.loads(data))
                         await asyncio.sleep(0.01)
             except asyncio.TimeoutError:
                 pass
@@ -79,7 +83,7 @@ class ServerBackend(object):
         return client
 
     async def add_to_waiters(self, waiter: "Client"):
-        await redis.lpush(REDIS_TO_PLAY, json.dumps(waiter.id))
+        await redis.lpush(REDIS_TO_PLAY, serializer.dumps(waiter.id))
 
     async def handle_pubsub(self):
 
@@ -91,7 +95,7 @@ class ServerBackend(object):
 
     async def find_partner(self):
         id = await redis.lpop(REDIS_TO_PLAY)
-        return json.loads(id) if id else None
+        return serializer.loads(id) if id else None
 
     async def start_game(self, client1: "Client", client2_id: str):
         game_id = str(uuid.uuid4())
@@ -108,7 +112,8 @@ class ServerBackend(object):
                 task = asyncio.create_task(getattr(self.clients[client_id], method.__name__)(**kwargs))
                 # await getattr(self.clients[client_id], method.__name__)(**kwargs)
             else:
-                redis.publish(REDIS_MSGS, json.dumps(dict(client_id=client_id, method=method.__name__, obj=kwargs)))
+                redis.publish(REDIS_MSGS,
+                              serializer.dumps(dict(client_id=client_id, method=method.__name__, obj=kwargs)))
 
     def delete_client(self, id):
         del self.clients[id]
@@ -178,7 +183,7 @@ class Client:
         Automatically discards invalid connections."""
         try:
             logging.debug(f"Sending msg to client_{self.num} {self.id} with cmd={cmd}")
-            await self.socket.send(json.dumps(dict(cmd=cmd, **data)))
+            await self.socket.send(serializer.dumps(dict(cmd=cmd, **data)))
         except Exception as e:
             logging.error("Communication error")
             # TODO close connection
@@ -199,7 +204,7 @@ class Client:
         4-done win
         5-done loose
         """
-        msg_obj = AttrDict(json.loads(msg))
+        msg_obj = AttrDict(serializer.loads(msg))
         if game_id := msg_obj.game_id:
             logging.debug(f"GameId: {game_id}, ClientId: {self.id}, msg: {str(msg)}")
             if msg_obj.cmd == 0:
@@ -235,7 +240,7 @@ class Client:
                     await server.exec_method(self.get_partner_id(), Client.loose)
             return True
         elif msg_obj.cmd == 5:
-            with RedisLock(redis, "game_lock:" + game_id, id=self.id):
+            with RedisLock(redis, "game_lock:" + game_id):
                 game: Game = await get_game(game_id)
                 if game.win is None:
                     game.win = self.get_partner_id()
@@ -299,19 +304,18 @@ async def reactor(ws):
 
 
 if __name__ == "__main__":
-    # from gevent import pywsgi
-    # from geventwebsocket.handler import WebSocketHandler
-
-    # from gevent.pywsgi import WSGIServer
-    # server = WSGIServer(('127.0.0.1', 5001), app)
-    # server.serve_forever()
     async def main():
         global redis, server
         redis = await aioredis.create_redis_pool(REDIS_URL)
+        logger.info(f"Redis connected {REDIS_URL}")
         server = ServerBackend()
-        async with websockets.serve(reactor, "localhost", 5001):
-            await server.handle_pubsub()
-            await asyncio.Future()  # run forever
+        loop = asyncio.get_running_loop()
+        stop = loop.create_future()
+        loop.add_signal_handler(signal.SIGTERM, stop.set_result, None)
+        port = os.environ.get("PORT", 5001)
+        logger.info(f"Starting on port {port}")
+        async with websockets.serve(reactor, "localhost", port):
+            await asyncio.gather(server.handle_pubsub(), stop)
 
 
     asyncio.run(main())
