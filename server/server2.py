@@ -314,7 +314,7 @@ if __name__ == "__main__":
         loop.add_signal_handler(signal.SIGTERM, stop.set_result, None)
         port = os.environ.get("PORT", 5001)
         logger.info(f"Starting on port {port}")
-        async with websockets.serve(reactor, "localhost", port):
+        async with websockets.serve(reactor, "0.0.0.0", port):
             await asyncio.gather(server.handle_pubsub(), stop)
 
 
